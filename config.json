@@ -4,7 +4,7 @@
   "onlySession": true,
   "cooldownMin": 10,
   "thresholds": {
-    "I": 3
+    "I": 4
   },
   "positions": {
     "I": "I2702",

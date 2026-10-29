@@ -1,0 +1,45 @@
+name: 换月提醒
+
+# GitHub 的定时任务按 UTC 走，这里全天每 5 分钟触发一次，
+# 具体是否干活由 watch.js 按北京时间判断交易时段。
+# 注意：GitHub 的 schedule 不保证准点，高峰期可能延迟十几分钟，极端情况会跳过某次。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 上一轮没跑完时不要叠加，避免同一分钟内重复推送
+concurrency:
+  group: roll-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 检查并推送
+        env:
+          BARK_URL: ${{ secrets.BARK_URL }}
+          SANDBOX_URL: ${{ secrets.SANDBOX_URL }}
+          SANDBOX_KEY: ${{ secrets.SANDBOX_KEY }}
+        run: node watch.js
+
+      - name: 提交配置与冷却状态
+        run: |
+          git config user.name "roll-watch-bot"
+          git config user.email "roll-watch-bot@users.noreply.github.com"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "state: $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M') 北京时间"
+            git push
+          fi

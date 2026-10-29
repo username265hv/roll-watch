@@ -1,4 +1,4 @@
-name: 换月提醒
+name: Roll Watch
 
 # GitHub 的定时任务按 UTC 走，这里全天每 5 分钟触发一次，
 # 具体是否干活由 watch.js 按北京时间判断交易时段。

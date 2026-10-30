@@ -49,11 +49,15 @@ jobs:
 
       - name: 提交配置与冷却状态
         if: always()
+        continue-on-error: true
         run: |
           git config user.name "roll-watch-bot"
           git config user.email "roll-watch-bot@users.noreply.github.com"
           git add -A
           if ! git diff --staged --quiet; then
             git commit -m "state: $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M') 北京时间"
-            git push
+            # 两次运行可能前后脚提交，先对齐远程再推；冲突时保留本地（冷却状态更重要）
+            git fetch -q origin master || true
+            git pull --rebase -X theirs origin master || git rebase --abort || true
+            git push || echo "状态回写失败，不影响监听"
           fi

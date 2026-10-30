@@ -308,7 +308,8 @@ async function pullRemoteCfg() {
   if (!SANDBOX) return null;
   const q = SANDBOX_KEY ? '?sharecode=' + encodeURIComponent(SANDBOX_KEY) : '';
   try {
-    const r = await getText(SANDBOX + '/api/alert/config' + q, {}, 8000);
+    // 20 秒：沙箱可能正在冷启动，8 秒经常等不到，白白退回旧配置
+    const r = await getText(SANDBOX + '/api/alert/config' + q, {}, 20000);
     if (r.status !== 200) return null;
     const j = JSON.parse(r.body);
     const c = j.cfg || j;
@@ -333,19 +334,32 @@ async function pullRemoteCfg() {
   }
 }
 
-/** 把这次执行的结果回写给沙箱，面板上的「监控中」看的就是这个 */
+/**
+ * 把这次执行的结果回写给沙箱，面板上的「监控中」看的就是这个。
+ *
+ * 沙箱没人访问时会休眠，第一个请求得先把它叫醒——冷启动经常超过 8 秒，
+ * 所以这里放宽到 20 秒，失败再补一次（顺带当第二次敲门）。
+ * 回写失败只是面板显示不准，推送本身在本地算，不受影响。
+ */
 async function beat(payload) {
   if (!SANDBOX) return;
   const q = SANDBOX_KEY ? '?sharecode=' + encodeURIComponent(SANDBOX_KEY) : '';
-  try {
-    await fetch(SANDBOX + '/api/alert/beat' + q, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch (e) {
-    log('回写心跳失败：' + e.message);
+  const url = SANDBOX + '/api/alert/beat' + q;
+  const body = JSON.stringify(payload);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(attempt === 1 ? 20000 : 12000),
+      });
+      if (r.ok) return;
+      log('回写心跳返回 HTTP ' + r.status);
+    } catch (e) {
+      log('回写心跳第 ' + attempt + ' 次失败：' + e.message);
+    }
+    if (attempt === 1) await sleep(2000);
   }
 }
 

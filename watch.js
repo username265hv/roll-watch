@@ -502,7 +502,8 @@ async function main() {
       return;
     }
     const waitStart = ns - Date.now();
-    if (waitStart > 20 * 60000) {
+    // 70 分钟以内就等着开盘（午休刚过、夜盘前一小时这类情况），再远就交给后面的定时器
+    if (waitStart > 70 * 60000) {
       log('距下一个交易时段还有 ' + Math.round(waitStart / 60000) + ' 分钟，本次不启动监听');
       return;
     }

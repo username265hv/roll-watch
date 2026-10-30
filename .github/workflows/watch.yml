@@ -1,12 +1,15 @@
 name: Roll Watch
 
 # 设计要点：不指望 GitHub 的定时器准点，也不指望它一定触发。
-# 一次 job 启动后自己连续盯 350 分钟，内部每 5 分钟一轮；
-# 同时密集挂一串冗余定时——上一次没被唤醒，下一次（30 分钟内）自然会补上。
-# 已有一个监听在跑时，新触发的会被 concurrency 挡住，不会重复推。
 #
+# 一次 job 启动后自己连续盯 350 分钟（内部每 60 秒一轮），收工前用个人令牌
+# 触发下一次运行，形成"接力"——一天只需 2-3 个 job 就能走完白盘 + 夜盘。
+# 交棒不经过 cron 调度器，所以不受 GitHub 高峰期限流影响
+# （实测北京时间 21:00-23:00 正好是美东上班时段，cron 整段零触发）。
+#
+# 下面的 cron 只负责"每天第一次把链子拉起来"，以及接力失败时兜底。
 # 定时按 UTC 写，对应北京时间：
-#   01:00-06:30 每 30 分钟  = 09:00-14:30，覆盖上午盘 + 下午盘
+#   01:00-06:30 每 30 分钟  = 09:00-14:30，覆盖白盘
 #   07:00                   = 15:00，收盘后这一次只做收尾
 #   12:30                   = 20:30，夜盘前 30 分钟
 #   13:00-14:30 每 30 分钟  = 21:00-22:30，覆盖夜盘
@@ -22,11 +25,16 @@ on:
         description: '连续盯多少分钟（默认 350，填 1 只跑一轮做测试）'
         required: false
         default: '350'
+      hops:
+        description: '内部使用：已经接力了几跳，用于防止无限自我触发'
+        required: false
+        default: '0'
 
 permissions:
   contents: write
 
-# 上一轮没跑完时不要叠加：同一时间只留一个监听进程
+# 上一轮没跑完时不要叠加：同一时间只留一个监听进程。
+# 交棒时新 job 会在这里排队，等旧的退出后自动接上。
 concurrency:
   group: roll-watch
   cancel-in-progress: false
@@ -48,7 +56,11 @@ jobs:
           BARK_URL: ${{ secrets.BARK_URL }}
           SANDBOX_URL: ${{ secrets.SANDBOX_URL }}
           SANDBOX_KEY: ${{ secrets.SANDBOX_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
           LOOP_MINUTES: ${{ github.event.inputs.minutes || '350' }}
+          HANDOFF_MINUTES: '350'
+          HOPS: ${{ github.event.inputs.hops || '0' }}
         run: node watch.js
 
       - name: 提交配置与冷却状态

@@ -53,6 +53,15 @@ const LOOP_STEP_MS = LOOP_STEP_SEC * 1000;
 const SYNC_EVERY = Math.max(1, Math.round(300 / LOOP_STEP_SEC));
 const FORCE_ANYTIME = ENV.FORCE_ANYTIME === '1';
 
+// 接力用的个人令牌（有 workflow 权限才能触发工作流；GITHUB_TOKEN 被官方禁止递归触发）
+const GH_PAT = ENV.GH_PAT || '';
+const GH_REPO = ENV.GH_REPO || 'username265hv/roll-watch';
+// 已经接力了几跳。防止代码写错导致无限自我触发，超过上限就老实等定时器。
+const HOPS = Number(ENV.HOPS || 0);
+// 交棒时给下一跳的时长。与本次的 LOOP_MIN 分开，方便用 1-3 分钟短测交棒逻辑。
+const HANDOFF_MIN = Number(ENV.HANDOFF_MINUTES || 350);
+const HOP_LIMIT = 12;
+
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 // ---------------------------------------------------------------- 读写
@@ -479,9 +488,56 @@ async function runOnce(opts) {
 }
 
 /**
- * 长跑模式：一个 job 连续盯到收盘，内部每 5 分钟一轮。
- * 关键收益——把「一天必须准点触发 288 次」降级成「一天触发 2 次」，
- * 就算 GitHub 的定时器大面积跳票也不影响。沙箱死不死更无所谓了。
+ * 交棒：用个人令牌触发自己下一次运行。
+ *
+ * 为什么需要它——GitHub 的 cron 在北京时间 21:00-23:00（UTC 13-15 点，
+ * 美东上班时间）正撞全球负载高峰，实测整段零触发。而夜盘恰好是铁矿最活跃的时段。
+ * 交棒不经过 cron 调度器，属于"工作流自己触发工作流"，稳定得多。
+ *
+ * 官方禁止 GITHUB_TOKEN 触发 workflow（防递归），所以必须用 PAT。
+ */
+async function handOff(minutes, hops) {
+  if (!GH_PAT) {
+    log('没有配 GH_PAT，无法交棒，只能等定时器');
+    return false;
+  }
+  if (hops >= HOP_LIMIT) {
+    log('已连续接力 ' + hops + ' 次，到达上限，停下来等定时器');
+    return false;
+  }
+  try {
+    const res = await fetch('https://api.github.com/repos/' + GH_REPO
+      + '/actions/workflows/watch.yml/dispatches', {
+      method: 'POST',
+      headers: {
+        Authorization: 'token ' + GH_PAT,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'roll-watch',
+      },
+      body: JSON.stringify({
+        ref: 'master',
+        inputs: { minutes: String(minutes), hops: String(hops + 1) },
+      }),
+    });
+    if (res.status === 204) {
+      log('已交棒给下一次运行（第 ' + (hops + 1) + ' 跳）');
+      return true;
+    }
+    log('交棒失败 HTTP ' + res.status + ' ' + String(await res.text()).slice(0, 200));
+    return false;
+  } catch (e) {
+    log('交棒异常：' + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/**
+ * 长跑模式：一个 job 连续盯到收盘，内部每 60 秒一轮。
+ *
+ * 一天由 2-3 个 job 接力走完：
+ *   09:15-15:05 白盘 → 15:05 交棒 → 睡到 20:50 → 交棒 → 21:00-23:05 夜盘
+ * 每段都远低于 GitHub 单 job 6 小时硬上限，也不依赖 cron 是否准点。
  */
 async function main() {
   if (!LOOP_MIN) {
@@ -489,7 +545,9 @@ async function main() {
     return;
   }
 
-  const hardStop = Date.now() + LOOP_MIN * 60000;
+  const jobStart = Date.now();
+  const budget = LOOP_MIN * 60000;
+  const hardStop = jobStart + budget;
 
   // 定时任务在什么时候被唤起都不一定。收盘后被唤起就别占着 runner 空转，
   // 直接交还给下一个触发点——后面还有一串冗余的 cron 兜着。
@@ -501,15 +559,25 @@ async function main() {
       log('接下来几个交易日都没有交易时段，退出');
       return;
     }
-    const waitStart = ns - Date.now();
-    // 70 分钟以内就等着开盘（午休刚过、夜盘前一小时这类情况），再远就交给后面的定时器
-    if (waitStart > 70 * 60000) {
-      log('距下一个交易时段还有 ' + Math.round(waitStart / 60000) + ' 分钟，本次不启动监听');
+    const gap = ns - Date.now();
+    // 睡不到开盘就别硬等：把本次预算睡光，再把剩下的等待交给下一个 job。
+    // 但只在本交易日还有时段时才有必要——夜盘收盘后（比如 23 点被误触发）
+    // 下个时段已经是明天的了，这时候直接退出，交给早晨的 cron。
+    if (gap > budget - 10 * 60000) {
+      if (lastSessionEndToday() <= Date.now()) {
+        log('距下一个交易时段 ' + Math.round(gap / 60000) + ' 分钟，属于下个交易日，本次退出等定时器');
+        return;
+      }
+      const sleepMs = Math.max(budget - 6 * 60000, 30000);
+      log('距下一个交易时段 ' + Math.round(gap / 60000) + ' 分钟，超出本次预算，'
+        + '先睡 ' + Math.round(sleepMs / 60000) + ' 分钟再交棒');
+      await sleep(sleepMs);
+      await handOff(HANDOFF_MIN, HOPS);
       return;
     }
-    if (waitStart > 0) {
-      log('提前 ' + Math.round(waitStart / 60000) + ' 分钟被唤起，等到开盘再开始');
-      await sleep(waitStart);
+    if (gap > 0) {
+      log('提前 ' + Math.round(gap / 60000) + ' 分钟被唤起，等到开盘再开始');
+      await sleep(gap);
     }
   }
 
@@ -532,11 +600,28 @@ async function main() {
       break;
     }
 
+    // 躺进空档（午休、收盘到夜盘之间）：本 job 结束前等不到下一次开盘就收工，
+    // 剩下的等待交给下一个 job，别在这里空转几小时。
+    if (!PRODUCTS.some((p) => inSession(p, bjNow()))) {
+      const ns = nextSessionStartTs();
+      if (ns && ns > stopAt) {
+        log('进入空档，下次开盘在 ' + Math.round((ns - now) / 60000) + ' 分钟后，收工交棒');
+        break;
+      }
+    }
+
     const nextTick = Math.ceil((now + 2000) / LOOP_STEP_MS) * LOOP_STEP_MS;
     const wait = Math.min(nextTick, stopAt) - now;
     if (wait < 5000) break;   // 剩不到 5 秒就别再起一轮了
     log('第 ' + round + ' 轮完成，' + Math.round(wait / 1000) + ' 秒后继续');
     await sleep(wait);
+  }
+
+  // 今天还有没跑完的时段就交棒，否则收工等明天
+  if (lastSessionEndToday() > Date.now()) {
+    await handOff(HANDOFF_MIN, HOPS);
+  } else {
+    log('今天的交易时段已全部跑完，不交棒，等明天由定时器唤起');
   }
 }
 

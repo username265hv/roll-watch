@@ -45,7 +45,13 @@ const BARK = ENV.BARK_URL || '';
 // 长跑模式：一次 job 连续盯多久（分钟）。0 = 只跑一轮就退出（本地调试用）。
 // GitHub 单 job 上限 6 小时，这里留 10 分钟余量给 checkout/commit。
 const LOOP_MIN = Number(ENV.LOOP_MINUTES || 0);
-const LOOP_STEP_MS = Number(ENV.LOOP_STEP_SEC || 300) * 1000;   // 每 5 分钟检查一次
+// 每轮间隔。默认 60 秒——采样是瞬时快照，越密越不容易漏掉盘中的短暂突破。
+// 但也不能再快了：新浪行情接口对短时间高频请求会限流，1 分钟是稳妥的极限。
+const LOOP_STEP_SEC = Number(ENV.LOOP_STEP_SEC || 60);
+const LOOP_STEP_MS = LOOP_STEP_SEC * 1000;
+// 拉配置、回写心跳这类"维持性"动作没必要每轮都做，按轮次降频即可
+const SYNC_EVERY = Math.max(1, Math.round(300 / LOOP_STEP_SEC));
+const FORCE_ANYTIME = ENV.FORCE_ANYTIME === '1';
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -347,21 +353,24 @@ function loadState() {
 }
 
 /** 跑一轮检查。原来的 main，逻辑没动，只是改成可被循环反复调用。 */
-async function runOnce() {
+async function runOnce(opts) {
+  const doSync = !opts || opts.sync !== false;   // 只有该同步的轮次才拉配置、写心跳
   const localCfg = Object.assign({}, DEFAULTS, readJson(CFG_FILE, {}));
   const state = loadState();
 
-  const remote = await pullRemoteCfg();
   let cfg = localCfg;
   let cfgChanged = false;
 
-  if (remote) {
-    cfg = Object.assign({}, localCfg, remote);
-    const backup = Object.assign({}, localCfg, remote);
-    if (!sameJson(backup, localCfg)) {
-      writeJson(CFG_FILE, backup);
-      cfgChanged = true;
-      log('配置已从沙箱同步并备份到仓库');
+  if (doSync) {
+    const remote = await pullRemoteCfg();
+    if (remote) {
+      cfg = Object.assign({}, localCfg, remote);
+      const backup = Object.assign({}, localCfg, remote);
+      if (!sameJson(backup, localCfg)) {
+        writeJson(CFG_FILE, backup);
+        cfgChanged = true;
+        log('配置已从沙箱同步并备份到仓库');
+      }
     }
   }
 
@@ -462,7 +471,8 @@ async function runOnce() {
 
   if (result.pushed.length || keepTouched || cfgChanged) writeJson(STATE_FILE, state);
 
-  await beat(result);
+  // 心跳 5 分钟一次足够（沙箱按 8 分钟判新鲜），不必每轮都占用一次请求
+  if (doSync) await beat(result);
 
   console.log('RESULT ' + JSON.stringify(result));
   return result;
@@ -483,7 +493,8 @@ async function main() {
 
   // 定时任务在什么时候被唤起都不一定。收盘后被唤起就别占着 runner 空转，
   // 直接交还给下一个触发点——后面还有一串冗余的 cron 兜着。
-  const anyInSession = PRODUCTS.some((p) => inSession(p, bjNow()));
+  // FORCE_ANYTIME=1 用于本地调试，跳过时段判断。
+  const anyInSession = FORCE_ANYTIME || PRODUCTS.some((p) => inSession(p, bjNow()));
   if (!anyInSession) {
     const ns = nextSessionStartTs();
     if (!ns) {
@@ -501,11 +512,11 @@ async function main() {
     }
   }
 
-  log('长跑启动：最多盯 ' + LOOP_MIN + ' 分钟，每 5 分钟一轮');
+  log('长跑启动：最多盯 ' + LOOP_MIN + ' 分钟，每 ' + LOOP_STEP_SEC + ' 秒一轮');
 
   for (let round = 1; ; round++) {
     try {
-      await runOnce();
+      await runOnce({ sync: (round - 1) % SYNC_EVERY === 0 });
     } catch (e) {
       log('第 ' + round + ' 轮异常：' + ((e && e.message) || e));
     }

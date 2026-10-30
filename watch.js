@@ -89,6 +89,28 @@ function inSession(prod, t) {
 }
 
 /**
+ * 下一个交易时段的开始时刻（时间戳）。未来 4 天内找不到就返回 0。
+ * 用途：定时任务可能在任何时间点被触发，收盘后触发的话没必要占着 runner 空转 6 小时。
+ * 时间点跟 inSession 对齐：09:15 / 12:55 / 21:00（夜盘只有铁矿那几个品种）。
+ */
+function nextSessionStartTs() {
+  const d = new Date(Date.now() + 8 * 3600 * 1000);
+  const bjMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * 3600 * 1000;
+  const slots = [915, 1255, 2100];
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const dayBase = bjMidnight + i * 86400000;
+    const wd = new Date(dayBase + 8 * 3600 * 1000).getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    for (const hm of slots) {
+      const ts = dayBase + Math.floor(hm / 100) * 3600000 + (hm % 100) * 60000;
+      if (ts > Date.now()) out.push(ts);
+    }
+  }
+  return out.length ? Math.min(...out) : 0;
+}
+
+/**
  * 北京时间今天最后一个交易时段的收盘时刻（时间戳）。周末返回 0。
  * 长跑模式靠它提前收工——下午 15:05 收完就别占着 runner 空转。
  * 注意夜盘 23:05 收盘，不跨零点是运气。
@@ -458,6 +480,27 @@ async function main() {
   }
 
   const hardStop = Date.now() + LOOP_MIN * 60000;
+
+  // 定时任务在什么时候被唤起都不一定。收盘后被唤起就别占着 runner 空转，
+  // 直接交还给下一个触发点——后面还有一串冗余的 cron 兜着。
+  const anyInSession = PRODUCTS.some((p) => inSession(p, bjNow()));
+  if (!anyInSession) {
+    const ns = nextSessionStartTs();
+    if (!ns) {
+      log('接下来几个交易日都没有交易时段，退出');
+      return;
+    }
+    const waitStart = ns - Date.now();
+    if (waitStart > 20 * 60000) {
+      log('距下一个交易时段还有 ' + Math.round(waitStart / 60000) + ' 分钟，本次不启动监听');
+      return;
+    }
+    if (waitStart > 0) {
+      log('提前 ' + Math.round(waitStart / 60000) + ' 分钟被唤起，等到开盘再开始');
+      await sleep(waitStart);
+    }
+  }
+
   log('长跑启动：最多盯 ' + LOOP_MIN + ' 分钟，每 5 分钟一轮');
 
   for (let round = 1; ; round++) {

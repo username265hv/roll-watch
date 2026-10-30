@@ -42,6 +42,10 @@ const ENV = process.env;
 const SANDBOX = (ENV.SANDBOX_URL || '').replace(/\/+$/, '');
 const SANDBOX_KEY = ENV.SANDBOX_KEY || '';
 const BARK = ENV.BARK_URL || '';
+// 长跑模式：一次 job 连续盯多久（分钟）。0 = 只跑一轮就退出（本地调试用）。
+// GitHub 单 job 上限 6 小时，这里留 10 分钟余量给 checkout/commit。
+const LOOP_MIN = Number(ENV.LOOP_MINUTES || 0);
+const LOOP_STEP_MS = Number(ENV.LOOP_STEP_SEC || 300) * 1000;   // 每 5 分钟检查一次
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -82,6 +86,20 @@ function inSession(prod, t) {
   if (t.hm >= 1255 && t.hm <= 1505) return true;
   if (prod.night && t.hm >= 2100 && t.hm <= 2305) return true;
   return false;
+}
+
+/**
+ * 北京时间今天最后一个交易时段的收盘时刻（时间戳）。周末返回 0。
+ * 长跑模式靠它提前收工——下午 15:05 收完就别占着 runner 空转。
+ * 注意夜盘 23:05 收盘，不跨零点是运气。
+ */
+function lastSessionEndToday() {
+  const t = bjNow();
+  if (t.wd === 0 || t.wd === 6) return 0;
+  const d = new Date(Date.now() + 8 * 3600 * 1000);
+  // 以「北京当日 00:00」为基准拼出 23:05，再换算回真实时间戳
+  const bjMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * 3600 * 1000;
+  return bjMidnight + 23 * 3600 * 1000 + 5 * 60 * 1000;
 }
 
 // ---------------------------------------------------------------- 合约
@@ -296,10 +314,20 @@ async function beat(payload) {
 
 // ---------------------------------------------------------------- 主流程
 
-async function main() {
+// 长跑时 state 必须跨轮保留：冷却窗口、已推记录都靠它，否则 5 分钟后会重复推。
+let RUN_STATE = null;
+function loadState() {
+  if (!RUN_STATE) {
+    RUN_STATE = readJson(STATE_FILE, { lastPush: {}, lastKeep: 0 });
+    if (!RUN_STATE.lastPush) RUN_STATE.lastPush = {};
+  }
+  return RUN_STATE;
+}
+
+/** 跑一轮检查。原来的 main，逻辑没动，只是改成可被循环反复调用。 */
+async function runOnce() {
   const localCfg = Object.assign({}, DEFAULTS, readJson(CFG_FILE, {}));
-  const state = readJson(STATE_FILE, { lastPush: {}, lastKeep: 0 });
-  if (!state.lastPush) state.lastPush = {};
+  const state = loadState();
 
   const remote = await pullRemoteCfg();
   let cfg = localCfg;
@@ -415,6 +443,46 @@ async function main() {
   await beat(result);
 
   console.log('RESULT ' + JSON.stringify(result));
+  return result;
+}
+
+/**
+ * 长跑模式：一个 job 连续盯到收盘，内部每 5 分钟一轮。
+ * 关键收益——把「一天必须准点触发 288 次」降级成「一天触发 2 次」，
+ * 就算 GitHub 的定时器大面积跳票也不影响。沙箱死不死更无所谓了。
+ */
+async function main() {
+  if (!LOOP_MIN) {
+    await runOnce();
+    return;
+  }
+
+  const hardStop = Date.now() + LOOP_MIN * 60000;
+  log('长跑启动：最多盯 ' + LOOP_MIN + ' 分钟，每 5 分钟一轮');
+
+  for (let round = 1; ; round++) {
+    try {
+      await runOnce();
+    } catch (e) {
+      log('第 ' + round + ' 轮异常：' + ((e && e.message) || e));
+    }
+
+    const now = Date.now();
+    const dayEnd = lastSessionEndToday();
+    let stopAt = hardStop;
+    if (dayEnd > now && dayEnd < stopAt) stopAt = dayEnd;   // 收盘就提前收工，不空转
+
+    if (now >= stopAt) {
+      log('到点收工，共跑 ' + round + ' 轮');
+      break;
+    }
+
+    const nextTick = Math.ceil((now + 2000) / LOOP_STEP_MS) * LOOP_STEP_MS;
+    const wait = Math.min(nextTick, stopAt) - now;
+    if (wait < 5000) break;   // 剩不到 5 秒就别再起一轮了
+    log('第 ' + round + ' 轮完成，' + Math.round(wait / 1000) + ' 秒后继续');
+    await sleep(wait);
+  }
 }
 
 main().catch((e) => {

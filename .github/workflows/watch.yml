@@ -1,17 +1,28 @@
 name: Roll Watch
 
-# GitHub 的定时任务按 UTC 走，这里全天每 5 分钟触发一次，
-# 具体是否干活由 watch.js 按北京时间判断交易时段。
-# 注意：GitHub 的 schedule 不保证准点，高峰期可能延迟十几分钟，极端情况会跳过某次。
+# 设计要点：不再指望 GitHub 的定时器准点。
+# 一次 job 启动后自己连续盯 345 分钟，内部每 5 分钟检查一轮，
+# 所以一天只需要 cron 触发两次（盘中一次、夜盘一次）。
+# 就算 GitHub 把大部分触发都跳掉，也不影响覆盖。
+#
+# 定时按 UTC 写，对应北京时间：
+#   01:15 UTC = 09:15 北京 → 最多跑到 14:55，覆盖上午盘 + 下午盘
+#   12:55 UTC = 20:55 北京 → 夜盘 23:05 收盘自动收工
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '15 1 * * 1-5'
+    - cron: '55 12 * * 1-5'
   workflow_dispatch:
+    inputs:
+      minutes:
+        description: '连续盯多少分钟（默认 350，填 1 只跑一轮做测试）'
+        required: false
+        default: '350'
 
 permissions:
   contents: write
 
-# 上一轮没跑完时不要叠加，避免同一分钟内重复推送
+# 上一轮没跑完时不要叠加：同一时间只留一个监听进程
 concurrency:
   group: roll-watch
   cancel-in-progress: false
@@ -19,7 +30,8 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    # GitHub 单 job 硬上限 6 小时，留 15 分钟余量给 checkout / setup / commit
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -27,14 +39,16 @@ jobs:
         with:
           node-version: '20'
 
-      - name: 检查并推送
+      - name: 连续盯盘并推送
         env:
           BARK_URL: ${{ secrets.BARK_URL }}
           SANDBOX_URL: ${{ secrets.SANDBOX_URL }}
           SANDBOX_KEY: ${{ secrets.SANDBOX_KEY }}
+          LOOP_MINUTES: ${{ github.event.inputs.minutes || '350' }}
         run: node watch.js
 
       - name: 提交配置与冷却状态
+        if: always()
         run: |
           git config user.name "roll-watch-bot"
           git config user.email "roll-watch-bot@users.noreply.github.com"

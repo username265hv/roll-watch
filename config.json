@@ -2,15 +2,11 @@
   "enabled": true,
   "bark": "",
   "onlySession": true,
-  "cooldownMin": 0,
+  "cooldownMin": 1,
   "thresholds": {
-    "I": 3
+    "I": 4
   },
   "positions": {
-    "I": "I2702",
-    "IM": "IM2612",
-    "IC": "IC2611",
-    "IF": "IF2611",
-    "IH": "IH2611"
+    "I": "I2702"
   }
 }

@@ -2,9 +2,9 @@
   "enabled": true,
   "bark": "",
   "onlySession": true,
-  "cooldownMin": 1,
+  "cooldownMin": 0,
   "thresholds": {
-    "I": 4
+    "I": 3
   },
   "positions": {
     "I": "I2702"

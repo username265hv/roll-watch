@@ -2,7 +2,7 @@
   "enabled": true,
   "bark": "",
   "onlySession": true,
-  "cooldownMin": 5,
+  "cooldownMin": 0,
   "thresholds": {
     "I": 3
   },

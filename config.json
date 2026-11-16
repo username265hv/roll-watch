@@ -4,6 +4,7 @@
   "onlySession": true,
   "cooldownMin": 0,
   "thresholds": {
+    "IM": 70,
     "I": 3
   },
   "positions": {

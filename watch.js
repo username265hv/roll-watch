@@ -231,6 +231,24 @@ function parseQuote(code, payload) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 长时间等待要留痕：整段 sleep 几小时在 Actions 日志里就是一片空白，
+ * 出了问题没法判断是"在睡"还是"卡死了"。每 10 分钟打一行。
+ */
+async function sleepTicked(ms, label) {
+  const CHUNK = 10 * 60000;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const left = end - Date.now();
+    if (left <= CHUNK) {
+      await sleep(left);
+      break;
+    }
+    await sleep(CHUNK);
+    log(label + '：还剩 ' + Math.round((end - Date.now()) / 60000) + ' 分钟');
+  }
+}
+
 async function fetchQuotes(codes) {
   const url = 'https://hq.sinajs.cn/list=' + codes.map((c) => 'nf_' + c).join(',');
   const headers = {
@@ -279,7 +297,7 @@ async function barkSend(rawUrl, title, body) {
   if (!base) return { ok: false, error: 'bark 地址无效' };
   const sep = base.indexOf('?') >= 0 ? '&' : '?';
   const url = base + '/' + encodeURIComponent(title) + '/' + encodeURIComponent(body)
-    + sep + 'group=' + encodeURIComponent('换月助手') + '&level=active';
+    + sep + 'group=' + encodeURIComponent('移仓助手') + '&level=active';
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
@@ -585,13 +603,13 @@ async function main() {
       const sleepMs = Math.max(budget - 6 * 60000, 30000);
       log('距下一个交易时段 ' + Math.round(gap / 60000) + ' 分钟，超出本次预算，'
         + '先睡 ' + Math.round(sleepMs / 60000) + ' 分钟再交棒');
-      await sleep(sleepMs);
+      await sleepTicked(sleepMs, '等待交棒');
       await handOff(HANDOFF_MIN, HOPS);
       return;
     }
     if (gap > 0) {
       log('提前 ' + Math.round(gap / 60000) + ' 分钟被唤起，等到开盘再开始');
-      await sleep(gap);
+      await sleepTicked(gap, '等待开盘');
     }
   }
 

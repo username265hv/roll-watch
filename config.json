@@ -5,7 +5,7 @@
   "cooldownMin": 0,
   "thresholds": {
     "IM": 70,
-    "I": 3.5
+    "I": 2
   },
   "positions": {
     "I": "I2703",

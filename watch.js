@@ -97,21 +97,21 @@ function bjNow(ts) {
 
 function inSession(prod, t) {
   if (t.wd === 0 || t.wd === 6) return false;
-  if (t.hm >= 915 && t.hm <= 1135) return true;
-  if (t.hm >= 1255 && t.hm <= 1505) return true;
-  if (prod.night && t.hm >= 2100 && t.hm <= 2305) return true;
+  if (t.hm >= 900 && t.hm <= 1130) return true;
+  if (t.hm >= 1300 && t.hm <= 1500) return true;
+  if (prod.night && t.hm >= 2100 && t.hm <= 2300) return true;
   return false;
 }
 
 /**
  * 下一个交易时段的开始时刻（时间戳）。未来 4 天内找不到就返回 0。
  * 用途：定时任务可能在任何时间点被触发，收盘后触发的话没必要占着 runner 空转 6 小时。
- * 时间点跟 inSession 对齐：09:15 / 12:55 / 21:00（夜盘只有铁矿那几个品种）。
+ * 时间点跟 inSession 对齐：09:00 / 13:00 / 21:00（夜盘只有铁矿那几个品种）。
  */
 function nextSessionStartTs() {
   const d = new Date(Date.now() + 8 * 3600 * 1000);
   const bjMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * 3600 * 1000;
-  const slots = [915, 1255, 2100];
+  const slots = [900, 1300, 2100];
   const out = [];
   for (let i = 0; i < 4; i++) {
     const dayBase = bjMidnight + i * 86400000;
@@ -127,16 +127,16 @@ function nextSessionStartTs() {
 
 /**
  * 北京时间今天最后一个交易时段的收盘时刻（时间戳）。周末返回 0。
- * 长跑模式靠它提前收工——下午 15:05 收完就别占着 runner 空转。
- * 注意夜盘 23:05 收盘，不跨零点是运气。
+ * 长跑模式靠它提前收工——下午 15:00 收完就别占着 runner 空转。
+ * 注意夜盘 23:00 收盘，不跨零点是运气。
  */
 function lastSessionEndToday() {
   const t = bjNow();
   if (t.wd === 0 || t.wd === 6) return 0;
   const d = new Date(Date.now() + 8 * 3600 * 1000);
-  // 以「北京当日 00:00」为基准拼出 23:05，再换算回真实时间戳
+  // 以「北京当日 00:00」为基准拼出 23:00，再换算回真实时间戳
   const bjMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * 3600 * 1000;
-  return bjMidnight + 23 * 3600 * 1000 + 5 * 60 * 1000;
+  return bjMidnight + 23 * 3600 * 1000;
 }
 
 // ---------------------------------------------------------------- 合约
@@ -568,7 +568,7 @@ async function handOff(minutes, hops) {
  * 长跑模式：一个 job 连续盯到收盘，内部每 60 秒一轮。
  *
  * 一天由 2-3 个 job 接力走完：
- *   09:15-15:05 白盘 → 15:05 交棒 → 睡到 20:50 → 交棒 → 21:00-23:05 夜盘
+ *   09:00-15:00 白盘 → 15:00 交棒 → 睡到 20:50 → 交棒 → 21:00-23:00 夜盘
  * 每段都远低于 GitHub 单 job 6 小时硬上限，也不依赖 cron 是否准点。
  */
 async function main() {
@@ -639,6 +639,13 @@ async function main() {
       if (ns && ns > stopAt) {
         log('进入空档，下次开盘在 ' + Math.round((ns - now) / 60000) + ' 分钟后，收工交棒');
         break;
+      }
+      // 空档里没必要每分钟拉一次行情——午休 90 分钟就是 90 次白请求。
+      // 直接睡到开盘，醒来正好跑下一轮。
+      if (ns && ns - now > 90000) {
+        log('空档中，' + Math.round((ns - now) / 60000) + ' 分钟后开盘，先睡');
+        await sleepTicked(ns - now, '空档等待');
+        continue;
       }
     }
 

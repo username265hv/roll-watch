@@ -141,12 +141,15 @@ function lastSessionEndToday() {
 
 // ---------------------------------------------------------------- 合约
 
+// 取 18 个月，不是 12：交易所挂牌的是「当月 + 往后 12 个」共 13 个，
+// 旧代码只取 12 个，永远少看最远那一个（2026-11 时就是 I2711）。
+// 多取的部分新浪返回空，会被「只留最新交易日」那步自然筛掉，不会误报。
 function candidateCodes(key, t) {
   const d = new Date((t ? Date.now() : Date.now()) + 8 * 3600 * 1000);
   const y = d.getUTCFullYear();
   const mo = d.getUTCMonth() + 1;
   const out = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 18; i++) {
     const k = mo - 1 + i;
     out.push(key + ('0' + ((y + Math.floor(k / 12)) % 100)).slice(-2) + ('0' + ((k % 12) + 1)).slice(-2));
   }

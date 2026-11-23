@@ -4,12 +4,12 @@
   "onlySession": true,
   "cooldownMin": 0,
   "thresholds": {
-    "IM": 70,
-    "I": 2
+    "IM": 80,
+    "I": 3
   },
   "positions": {
     "I": "I2703",
-    "IM": "IM2611",
+    "IM": "IM2612",
     "IC": "IC2611",
     "IF": "IF2611",
     "IH": "IH2611"

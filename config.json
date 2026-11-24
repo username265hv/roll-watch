@@ -9,6 +9,14 @@
   },
   "positions": {
     "I": "I2703",
-    "IM": "IM2612"
-  }
+    "IM": "IM2612",
+    "IH": "IH2612"
+  },
+  "favorites": [
+    "IM",
+    "I",
+    "IC",
+    "IF",
+    "IH"
+  ]
 }

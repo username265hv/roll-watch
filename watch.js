@@ -21,12 +21,86 @@ const path = require('path');
 const CFG_FILE = path.join(__dirname, 'config.json');
 const STATE_FILE = path.join(__dirname, 'state.json');
 
+// 国内全部期货品种。跟网页 /products.js 是同一份内容——那个文件三端共用，
+// 这里内嵌一份是为了让本脚本保持零依赖（Actions 里只 checkout 这一个文件也能跑）。
+// 改品种时两处一起改：网页那份是权威本，这里是副本。
 const PRODUCTS = [
+  { k: 'IF', t: '沪深300', m: 300, u: '点', night: false },
+  { k: 'IH', t: '上证50', m: 300, u: '点', night: false },
+  { k: 'IC', t: '中证500', m: 200, u: '点', night: false },
   { k: 'IM', t: '中证1000', m: 200, u: '点', night: false },
-  { k: 'I',  t: '铁矿石',   m: 100, u: '元/吨', night: true },
-  { k: 'IC', t: '中证500',  m: 200, u: '点', night: false },
-  { k: 'IF', t: '沪深300',  m: 300, u: '点', night: false },
-  { k: 'IH', t: '上证50',   m: 300, u: '点', night: false },
+  { k: 'T', t: '10年国债', m: 10000, u: '点', night: false },
+  { k: 'TF', t: '5年国债', m: 10000, u: '点', night: false },
+  { k: 'TS', t: '2年国债', m: 20000, u: '点', night: false },
+  { k: 'TL', t: '30年国债', m: 10000, u: '点', night: false },
+  { k: 'CU', t: '铜', m: 5, u: '元/吨', night: true },
+  { k: 'AL', t: '铝', m: 5, u: '元/吨', night: true },
+  { k: 'ZN', t: '锌', m: 5, u: '元/吨', night: true },
+  { k: 'PB', t: '铅', m: 5, u: '元/吨', night: true },
+  { k: 'NI', t: '镍', m: 1, u: '元/吨', night: true },
+  { k: 'SN', t: '锡', m: 1, u: '元/吨', night: true },
+  { k: 'AU', t: '黄金', m: 1000, u: '元/克', night: true },
+  { k: 'AG', t: '白银', m: 15, u: '元/千克', night: true },
+  { k: 'RB', t: '螺纹钢', m: 10, u: '元/吨', night: true },
+  { k: 'WR', t: '线材', m: 10, u: '元/吨', night: true },
+  { k: 'HC', t: '热卷', m: 10, u: '元/吨', night: true },
+  { k: 'SS', t: '不锈钢', m: 5, u: '元/吨', night: true },
+  { k: 'BU', t: '沥青', m: 10, u: '元/吨', night: true },
+  { k: 'RU', t: '橡胶', m: 10, u: '元/吨', night: true },
+  { k: 'SP', t: '纸浆', m: 10, u: '元/吨', night: true },
+  { k: 'FU', t: '燃油', m: 10, u: '元/吨', night: true },
+  { k: 'BR', t: '丁二烯橡胶', m: 5, u: '元/吨', night: true },
+  { k: 'AO', t: '氧化铝', m: 20, u: '元/吨', night: true },
+  { k: 'SC', t: '原油', m: 1000, u: '元/桶', night: true },
+  { k: 'LU', t: '低硫燃油', m: 10, u: '元/吨', night: true },
+  { k: 'NR', t: '20号胶', m: 10, u: '元/吨', night: true },
+  { k: 'BC', t: '国际铜', m: 5, u: '元/吨', night: true },
+  { k: 'EC', t: '集运欧线', m: 50, u: '点', night: false },
+  { k: 'I', t: '铁矿石', m: 100, u: '元/吨', night: true },
+  { k: 'J', t: '焦炭', m: 100, u: '元/吨', night: true },
+  { k: 'JM', t: '焦煤', m: 60, u: '元/吨', night: true },
+  { k: 'M', t: '豆粕', m: 10, u: '元/吨', night: true },
+  { k: 'Y', t: '豆油', m: 10, u: '元/吨', night: true },
+  { k: 'P', t: '棕榈油', m: 10, u: '元/吨', night: true },
+  { k: 'A', t: '豆一', m: 10, u: '元/吨', night: true },
+  { k: 'B', t: '豆二', m: 10, u: '元/吨', night: true },
+  { k: 'C', t: '玉米', m: 10, u: '元/吨', night: true },
+  { k: 'CS', t: '玉米淀粉', m: 10, u: '元/吨', night: true },
+  { k: 'L', t: '塑料', m: 5, u: '元/吨', night: true },
+  { k: 'V', t: 'PVC', m: 5, u: '元/吨', night: true },
+  { k: 'PP', t: '聚丙烯', m: 5, u: '元/吨', night: true },
+  { k: 'EG', t: '乙二醇', m: 10, u: '元/吨', night: true },
+  { k: 'EB', t: '苯乙烯', m: 5, u: '元/吨', night: true },
+  { k: 'PG', t: '液化气', m: 20, u: '元/吨', night: true },
+  { k: 'JD', t: '鸡蛋', m: 10, u: '元/500kg', night: false },
+  { k: 'LH', t: '生猪', m: 16, u: '元/吨', night: false },
+  { k: 'RR', t: '粳米', m: 10, u: '元/吨', night: false },
+  { k: 'FB', t: '纤维板', m: 500, u: '元/立方米', night: false },
+  { k: 'BB', t: '胶合板', m: 500, u: '元/张', night: false },
+  { k: 'LG', t: '原木', m: 90, u: '元/立方米', night: false },
+  { k: 'SR', t: '白糖', m: 10, u: '元/吨', night: true },
+  { k: 'CF', t: '棉花', m: 5, u: '元/吨', night: true },
+  { k: 'CY', t: '棉纱', m: 5, u: '元/吨', night: true },
+  { k: 'TA', t: 'PTA', m: 5, u: '元/吨', night: true },
+  { k: 'MA', t: '甲醇', m: 10, u: '元/吨', night: true },
+  { k: 'FG', t: '玻璃', m: 20, u: '元/吨', night: true },
+  { k: 'SA', t: '纯碱', m: 20, u: '元/吨', night: true },
+  { k: 'RM', t: '菜粕', m: 10, u: '元/吨', night: true },
+  { k: 'OI', t: '菜油', m: 10, u: '元/吨', night: true },
+  { k: 'PF', t: '短纤', m: 5, u: '元/吨', night: true },
+  { k: 'SH', t: '烧碱', m: 30, u: '元/吨', night: true },
+  { k: 'PX', t: '对二甲苯', m: 5, u: '元/吨', night: true },
+  { k: 'PR', t: '瓶片', m: 15, u: '元/吨', night: true },
+  { k: 'ZC', t: '动力煤', m: 100, u: '元/吨', night: true },
+  { k: 'SF', t: '硅铁', m: 5, u: '元/吨', night: false },
+  { k: 'SM', t: '锰硅', m: 5, u: '元/吨', night: false },
+  { k: 'UR', t: '尿素', m: 20, u: '元/吨', night: false },
+  { k: 'AP', t: '苹果', m: 10, u: '元/吨', night: false },
+  { k: 'CJ', t: '红枣', m: 5, u: '元/吨', night: false },
+  { k: 'PK', t: '花生', m: 5, u: '元/吨', night: false },
+  { k: 'SI', t: '工业硅', m: 5, u: '元/吨', night: false },
+  { k: 'LC', t: '碳酸锂', m: 1, u: '元/吨', night: false },
+  { k: 'PS', t: '多晶硅', m: 3, u: '元/吨', night: false },
 ];
 
 const DEFAULTS = {
@@ -281,6 +355,38 @@ async function fetchQuotes(codes) {
   throw lastErr || new Error('取数失败');
 }
 
+/**
+ * 一次拉一大串合约。list= 是批量接口，但 URL 太长会被截，按 120 个一批切开。
+ * 某一块失败不影响其它块，全空才算整体失败。
+ */
+const BATCH_CODES = 120;
+
+async function fetchBatch(codes) {
+  const out = {};
+  let lastErr = null;
+  for (let i = 0; i < codes.length; i += BATCH_CODES) {
+    const chunk = codes.slice(i, i + BATCH_CODES);
+    try {
+      const q = await fetchQuotes(chunk);
+      Object.assign(out, q);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (!Object.keys(out).length && lastErr) throw lastErr;
+  return out;
+}
+
+/** 从合并回来的行情里挑出属于某个品种的合约：前缀 + 正好 4 位月份 */
+function pickProduct(pool, key) {
+  const out = {};
+  const n = key.length;
+  Object.keys(pool).forEach((c) => {
+    if (c.length === n + 4 && c.indexOf(key) === 0 && /^\d{4}$/.test(c.slice(n))) out[c] = pool[c];
+  });
+  return out;
+}
+
 // ---------------------------------------------------------------- 推送
 
 function sanitizeBark(raw) {
@@ -432,21 +538,33 @@ async function runOnce(opts) {
   if (!barkUrl) { result.skipped = 'no-bark'; log('没配 Bark，跳过'); }
   else if (!cfg.enabled) { result.skipped = 'disabled'; log('提醒已关闭，跳过'); }
   else {
+    // 先把这轮要算的品种挑出来，再把所有候选合约并成几批一次拉回。
+    // 品种多的时候一个品种发一次请求会把 60 秒的采样周期吃满。
+    const targets = [];
     for (const p of PRODUCTS) {
       const th = Number((cfg.thresholds || {})[p.k]);
       const posCode = (cfg.positions || {})[p.k];
       if (!th || !posCode) continue;
       if (cfg.onlySession && !inSession(p, now)) continue;
-      result.session = true;
+      targets.push({ p, th, posCode: String(posCode).toUpperCase() });
+    }
+    result.session = targets.length > 0;
 
-      let quotes;
+    const allCodes = [];
+    targets.forEach((t) => { candidateCodes(t.p.k).forEach((c) => allCodes.push(c)); });
+    let pool = {};
+    if (allCodes.length) {
       try {
-        quotes = await fetchQuotes(candidateCodes(p.k));
+        pool = await fetchBatch(allCodes);
       } catch (e) {
-        result.items.push({ product: p.k, error: 'fetch: ' + e.message });
-        log(p.t + ' 取数失败：' + e.message);
-        continue;
+        result.items.push({ error: 'fetch: ' + e.message });
+        log('批量取数失败：' + e.message);
       }
+    }
+
+    for (const t of targets) {
+      const p = t.p, th = t.th, posCode = t.posCode;
+      const quotes = pickProduct(pool, p.k);
 
       // 已到期合约新浪仍返回旧快照，只留最新交易日那批
       let latest = null;

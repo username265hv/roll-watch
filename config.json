@@ -5,12 +5,11 @@
   "cooldownMin": 0,
   "thresholds": {
     "IM": 80,
-    "I": 3
+    "I": 4
   },
   "positions": {
     "I": "I2703",
-    "IM": "IM2612",
-    "IH": "IH2612"
+    "IM": "IM2612"
   },
   "favorites": [
     "IM",

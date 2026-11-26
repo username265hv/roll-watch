@@ -9,7 +9,12 @@
   },
   "positions": {
     "I": "I2707",
-    "IM": "IM2612"
+    "IM": "IM2612",
+    "AU": "AU2704",
+    "AG": "AG2703",
+    "CU": "CU2709",
+    "SC": "SC2709",
+    "LH": "LH2701"
   },
   "favorites": [
     "IM",
